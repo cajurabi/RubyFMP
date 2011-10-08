@@ -367,6 +367,9 @@ class RubyFMAP
   def initialize
     # Create struct
     @Block_S = Struct.new(:iBGOffset, :aiFGOffset, :aoUser, :bTopLeft, :bTopRight, :bBottomLeft, :bBottomRight, :bTrigger)
+    @Animation_S = Struct.new(:iType, :iDelay, :iCount, :iUser, :iCurOffset, :iStartOffset, :iEndOffset)
+
+    @aiLayers = Array.new(8) { Object.new }
   end
 
   protected
@@ -471,10 +474,10 @@ class RubyFMAP
     until @sioFMap.pos >= iStopPos do
       iStartPos = @sioFMap.pos
       
-      iBGOffset = @sioFMap.read(4).unpack(@long).to_s.to_i
-      aiFGOffset[0] = @sioFMap.read(4).unpack(@long).to_s.to_i
-      aiFGOffset[1] = @sioFMap.read(4).unpack(@long).to_s.to_i
-      aiFGOffset[2] = @sioFMap.read(4).unpack(@long).to_s.to_i
+      iBGOffset = @sioFMap.read(4).unpack(@long)[0]
+      aiFGOffset[0] = @sioFMap.read(4).unpack(@long)[0]
+      aiFGOffset[1] = @sioFMap.read(4).unpack(@long)[0]
+      aiFGOffset[2] = @sioFMap.read(4).unpack(@long)[0]
     
       if @mapType > 0
         ### compute block size
@@ -486,13 +489,13 @@ class RubyFMAP
         aiFGOffset[2] *= iBlockSize        
       end
       
-      aoUser[0] = @sioFMap.read(4).unpack(@long).to_s.to_i
-      aoUser[1] = @sioFMap.read(4).unpack(@long).to_s.to_i
-      aoUser[2] = @sioFMap.read(2).unpack(@short).to_s.to_i
-      aoUser[3] = @sioFMap.read(2).unpack(@short).to_s.to_i
-      aoUser[4] = @sioFMap.read(1).unpack('C').to_s.to_i
-      aoUser[5] = @sioFMap.read(1).unpack('C').to_s.to_i
-      aoUser[6] = @sioFMap.read(1).unpack('C').to_s.to_i
+      aoUser[0] = @sioFMap.read(4).unpack(@long)[0]
+      aoUser[1] = @sioFMap.read(4).unpack(@long)[0]
+      aoUser[2] = @sioFMap.read(2).unpack(@short)[0]
+      aoUser[3] = @sioFMap.read(2).unpack(@short)[0]
+      aoUser[4] = @sioFMap.read(1).unpack('C')[0]
+      aoUser[5] = @sioFMap.read(1).unpack('C')[0]
+      aoUser[6] = @sioFMap.read(1).unpack('C')[0]
       
       sBits         = @sioFMap.read(1).unpack('b8')
       bTopLeft      = sBits[0] == '1'
@@ -529,132 +532,108 @@ class RubyFMAP
   def decodeLayer(iChunkSize, iLayer)
     raise "Layer corrupted: layer #{iLayer} size (#{iChunkSize}) is smaller than #{@mapHeight * @mapWidth * 2} bytes in #@sFilename" if iChunkSize < @mapHeight * @mapWidth * 2
     raise "Layer corrupted: layer #{iLayer} size (#{iChunkSize}) is larger than #{@mapHeight * @mapWidth * 2} bytes in #@sFilename" if iChunkSize > @mapHeight * @mapWidth * 2
-    
+
+    ### Get current position
+    iStartPos = @sioFMap.pos
+
+    @aiLayers[iLayer] =  Array.new(@mapHeight * @mapWidth) { Integer }
+
     case @mapType
-      when 0 then
-        for iFig in 0..(@mapHeight * @mapWidth)
-          @aiLayers[iLayer][iFig] = @sioFMap.read(2).unpack(@short).to_s.to_i 
+    when 0 then
+      for iFig in (0..(@mapHeight * @mapWidth - 1)) do
+        iValue = @sioFMap.read(2).unpack(@short)[0]
+
+        if iValue >= 0
+          iValue /= @mapBlockStructSize
         end
-        
-      when 1 then
-      
-      when 2 then
-      
-      when 3 then
+
+        @aiLayers[iLayer][iFig] = iValue
+      end
+
+    when 1 then
+      for iFig in (0..(@mapHeight * @mapWidth - 1)) do
+        iValue = @sioFMap.read(2).unpack(@short)[0]
+
+        if iValue < 0
+          iValue *= 16
+        end
+
+        @aiLayers[iLayer][iFig] = iValue
+      end
+
+    when 2 then
+      iKiwi = 0
+      for iFig in (0..(@mapHeight * @mapWidth - 1)) do
+        iCount = @sioFMap.read(2).unpack(@short)[0]
+
+        if iCount > 0
+          while iCount != 0
+            iValue = @sioFMap.read(2).unpack(@short)[0]
+
+            if iValue < 0
+              iValue *= 16
+            end
+
+            @aiLayers[iLayer][iKiwi] = iValue
+
+            iKiwi  += 1
+            iCount -= 1
+          end
+        elsif iCount < 0
+          iValue = @sioFMap.read(2).unpack(@short)[0]
+
+          if iValue < 0
+            iValue *= 16
+          end
+
+          while iCount != 0
+            @aiLayers[iLayer][iKiwi] = iValue
+
+            iKiwi  += 1
+            iCount += 1
+          end
+        else
+          ### Raise exception if we encounter a map entry with a value of 0
+          raise "Unsupported layer: value (0) found in map type #@mapType in #@sFile, layer #{iLayer} position " + @sioFMap.pos
+        end
+      end
+
+    when 3 then
+      iKiwi = 0
+      for iFig in (0..(@mapHeight * @mapWidth - 1)) do
+        iCount = @sioFMap.read(2).unpack(@short)[0]
+
+        if iCount > 0
+          while iCount != 0
+            iValue = @sioFMap.read(2).unpack(@short)[0]
+
+            if iValue < 0
+              iValue *= 16
+            end
+
+            @aiLayers[iLayer][iKiwi] = iValue
+
+            iKiwi  += 1
+            iCount -= 1
+          end
+        elsif iCount < 0
+          iIdx = @sioFMap.read(2).unpack(@short)[0]
+
+          while iCount != 0
+            @aiLayers[iLayer][iKiwi] = @aiLayers[iLayer][iKiwi + iIdx]
+
+            iKiwi  += 1
+            iCount += 1
+          end
+        else
+          ### Raise exception if we encounter a map entry with a value of 0
+          raise "Unsupported layer: value (0) found in map type #@mapType in #@sFile, layer #{iLayer} position " + @sioFMap.pos
+        end
+      end
     end
-#  mdatpt += 8;
-#  mymappt = mapmappt[lnum];
-#  if (maptype == 0) {
-#    logit("Maptype==0\n");
-#    for (j=0; j<mapheight; j++) {
-#      for (i=0; i<mapwidth; i++) {
-#        *mymappt = (short int) MapGetshort(mdatpt);
-#        if (*mymappt >= 0) {
-#          *mymappt /= blockstrsize;
-#        } else {
-#          *mymappt /= 16;
-#          *mymappt *= sizeof(ANISTR);
-#        }
-#        mdatpt+=2;
-#        mymappt++;
-#      }
-#    }
-#  } else {
-#    if (maptype == 1) {
-#      logit("Maptype==1\n");
-#      for (j=0; j<mapheight; j++) {
-#        for (i=0; i<mapwidth; i++) {
-#          *mymappt = (short int) MapGetshort(mdatpt);
-#          logit("%d-", *mymappt);
-#          if (*mymappt < 0) {
-#            *mymappt *= sizeof(ANISTR);
-#          }
-#          mdatpt+=2;
-#          mymappt++;
-#        }
-#        logit("\n");
-#      }
-#    } else {
-#      if (maptype == 2) {
-#        logit("Maptype==2\n");
-#        for (j=0; j<mapheight; j++) {
-#          logit("\nLine %d: ", j);
-#          for (i=0; i<mapwidth;) {
-#            k = (int) MapGetshort(mdatpt);
-#            mdatpt += 2;
-#            if (k > 0) {
-#              logit("%dC : ", k);
-#              while (k) {
-#                *mymappt = (short int) MapGetshort(mdatpt);
-#                if (*mymappt < 0) {
-#                  *mymappt *= sizeof(ANISTR);
-#                }
-#                mymappt++;
-#                mdatpt += 2;
-#                i++;
-#                k--;
-#              }
-#            } else {
-#              if (k < 0) {
-#                logit("%dR : ", k);
-#                l = (int) MapGetshort(mdatpt);
-#                mdatpt += 2;
-#                while (k) {
-#                  *mymappt = (short int) l;
-#                  if (*mymappt < 0) {
-#                    *mymappt *= sizeof(ANISTR);
-#                  }
-#                  mymappt++;
-#                  i++;
-#                  k++;
-#                }
-#              } else {
-#              }
-#            }
-#          }
-#        }
-#      } else {
-#        if (maptype == 3) {
-#          logit("Maptype==3\n");
-#          for (j=0; j<mapheight; j++) {
-#            for (i=0; i<mapwidth;) {
-#              k = (int) MapGetshort(mdatpt);
-#              mdatpt += 2;
-#              if (k > 0) {
-#                while (k) {
-#                  *mymappt = (short int) MapGetshort(mdatpt);
-#                  if (*mymappt < 0) {
-#                    *mymappt *= sizeof(ANISTR);
-#                  }
-#                  mymappt++;
-#                  mdatpt += 2;
-#                  i++;
-#                  k--;
-#                }
-#              } else {
-#                if (k < 0) {
-#                  mymap2pt = mymappt
-#                      + (int) MapGetshort(mdatpt);
-#                  mdatpt += 2;
-#                  while (k) {
-#                    *mymappt = *mymap2pt;
-#                    if (*mymappt < 0) {
-#                      *mymappt *= sizeof(ANISTR);
-#                    }
-#                    mymappt++;
-#                    mymap2pt++;
-#                    i++;
-#                    k++;
-#                  }
-#                } else {
-#                }
-#              }
-#            }
-#          }
-#        }
-#      }
-#    }
-#  }
+
+    ### Raise exception if we did not read all of the map header data
+    raise "Unsupported layer: chunk size is incorrect (#{iChunkSize}) in #@sFile" if @sioFMap.pos - iStartPos - iChunkSize != 0
 
   end
 
@@ -667,11 +646,11 @@ class RubyFMAP
     iStartPos = @sioFMap.pos
     
     ### Map Version stored major:minor
-    @mapVersion = @sioFMap.read(1).unpack('C').to_s.to_f + ('0.' + @sioFMap.read(1).unpack('C').to_s).to_f   
+    @mapVersion = @sioFMap.read(1).unpack('C')[0] + ('0.' + @sioFMap.read(1).unpack('C').to_s).to_f
     puts "Map version: #@mapVersion"
     raise "Unsupported map version: #@mapVersion" if @mapVersion > 1.0
     
-    @mapLittleEndian = @sioFMap.read(1).unpack('C').to_s.to_i == 1
+    @mapLittleEndian = @sioFMap.read(1).unpack('C')[0] == 1
     if @mapLittleEndian
       @short = 'v'
       @long  = 'V'
@@ -683,12 +662,12 @@ class RubyFMAP
 
     ### mapType = 0 - 32 byte offset
     ### mapType != 0 - 16 byte offset
-    @mapType = @sioFMap.read(1).unpack('C').to_s.to_i
+    @mapType = @sioFMap.read(1).unpack('C')[0]
     puts "Map type: #@mapType"
     raise "Unsupported map type: #@mapType" if @mapType > 3
     
-    @mapWidth = @sioFMap.read(2).unpack(@short).to_s.to_i
-    @mapHeight = @sioFMap.read(2).unpack(@short).to_s.to_i
+    @mapWidth = @sioFMap.read(2).unpack(@short)[0]
+    @mapHeight = @sioFMap.read(2).unpack(@short)[0]
     puts "Map width: #@mapWidth"
     puts "Map height: #@mapHeight"
 
@@ -696,35 +675,35 @@ class RubyFMAP
     @sioFMap.read(4)
 
     ### Height and Width in pixels of the blocks
-    @mapBlockWidth = @sioFMap.read(2).unpack(@short).to_s.to_i
-    @mapBlockHeight = @sioFMap.read(2).unpack(@short).to_s.to_i
+    @mapBlockWidth = @sioFMap.read(2).unpack(@short)[0]
+    @mapBlockHeight = @sioFMap.read(2).unpack(@short)[0]
     puts "Block width: #@mapBlockWidth"
     puts "Block height: #@mapBlockHeight"
 
     ### Bitdepth of blocks
-    @mapBitDepth = @sioFMap.read(2).unpack(@short).to_s.to_i
+    @mapBitDepth = @sioFMap.read(2).unpack(@short)[0]
     raise "Unsupported bit depth: #@mapBitDepth in #@sFilename.  Only support 8, 16, and 24" if !(@mapBitDepth == 8 or @mapBitDepth == 16 or @mapBitDepth == 24) 
     puts "Block bit depth: #@mapBitDepth"
 
     ### Size of block struct size
-    @mapBlockStructSize = @sioFMap.read(2).unpack(@short).to_s.to_i
-    raise "Unsupport block struct size: block struct size (#@mapBlockStructSize) is less than 32" if @mapBlockStructSize < 32
+    @mapBlockStructSize = @sioFMap.read(2).unpack(@short)[0]
+    raise "Unsupported block struct size: block struct size (#@mapBlockStructSize) is less than 32" if @mapBlockStructSize < 32
     puts "Block struct size: #@mapBlockStructSize"
     
     ### Number of block structures in BKDT
-    @mapNumBlockStruct = @sioFMap.read(2).unpack(@short).to_s.to_i
+    @mapNumBlockStruct = @sioFMap.read(2).unpack(@short)[0]
     puts "Number of blocks: #@mapNumBlockStruct"
  
     ### Number of blocks in graphics BODY
-    @mapNumBlockGfx = @sioFMap.read(2).unpack(@short).to_s.to_i
+    @mapNumBlockGfx = @sioFMap.read(2).unpack(@short)[0]
 
 
     ### Color key values used for transparency
     if iChunkSize > 24
-      @mapColorKey8bit = @sioFMap.read(1).unpack('C').to_s.to_i
-      @mapColorKeyRed = @sioFMap.read(1).unpack('C').to_s.to_i
-      @mapColorKeyGreen = @sioFMap.read(1).unpack('C').to_s.to_i
-      @mapColorKeyBlue = @sioFMap.read(1).unpack('C').to_s.to_i
+      @mapColorKey8bit = @sioFMap.read(1).unpack('C')[0]
+      @mapColorKeyRed = @sioFMap.read(1).unpack('C')[0]
+      @mapColorKeyGreen = @sioFMap.read(1).unpack('C')[0]
+      @mapColorKeyBlue = @sioFMap.read(1).unpack('C')[0]
     else
       ### No transparency
       ### TODO: do I need to set???
@@ -732,10 +711,10 @@ class RubyFMAP
     
     ### Check for non-rectangular info
     if iChunkSize > 28
-      @mapBlockgapx = @sioFMap.read(2).unpack(@short).to_s.to_i
-      @mapBlockgapy = @sioFMap.read(2).unpack(@short).to_s.to_i
-      @mapBlockStaggerX = @sioFMap.read(2).unpack(@short).to_s.to_i
-      @mapBlockStaggerY = @sioFMap.read(2).unpack(@short).to_s.to_i
+      @mapBlockgapx = @sioFMap.read(2).unpack(@short)[0]
+      @mapBlockgapy = @sioFMap.read(2).unpack(@short)[0]
+      @mapBlockStaggerX = @sioFMap.read(2).unpack(@short)[0]
+      @mapBlockStaggerY = @sioFMap.read(2).unpack(@short)[0]
     else      
       @mapBlockgapx = @mapBlockWidth
       @mapBlockgapy = @mapBlockHeight
@@ -746,14 +725,14 @@ class RubyFMAP
     ### Check for clickmask
     ### TODO: how is click mask used?
     if iChunkSize > 36
-      @mapClickMask = @sioFMap.read(2).unpack(@short).to_s.to_i
+      @mapClickMask = @sioFMap.read(2).unpack(@short)[0]
     else
       @mapClickMask = 0
     end
 
     ### Check for Iso pillars
     if iChunkSize > 38
-      @mapIsoPillars = @sioFMap.read(2).unpack(@short).to_s.to_i
+      @mapIsoPillars = @sioFMap.read(2).unpack(@short)[0]
     else
       @mapIsoPillars = 0
     end
@@ -772,7 +751,7 @@ class RubyFMAP
     if @sioFMap.read(4) == 'FORM'
       puts 'Form found!'
     
-      iFMapSize = @sioFMap.read(4).unpack('N').to_s.to_i
+      iFMapSize = @sioFMap.read(4).unpack('N')[0]
       iFileSize = @sioFMap.size - 8
       
       if iFMapSize == iFileSize
@@ -790,12 +769,12 @@ class RubyFMAP
       
       until @sioFMap.pos >= iFMapSize do
         begin
-          self.send('decode' + @sioFMap.read(4), @sioFMap.read(4).unpack('N').to_s.to_i)
+          self.send('decode' + @sioFMap.read(4), @sioFMap.read(4).unpack('N')[0])
         rescue NoMethodError
           puts $!
 
           @sioFMap.seek(@sioFMap.pos - 4)
-          iChunkSize = @sioFMap.read(4).unpack('N').to_s.to_i
+          iChunkSize = @sioFMap.read(4).unpack('N')[0]
           puts 'skipping ' + iChunkSize.to_s
           
           @sioFMap.read(iChunkSize)
